@@ -1,14 +1,13 @@
 package mr
 
 import (
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"io"
 	"log"
 	"net/rpc"
 	"os"
-
-	"6.5840/mr"
 )
 
 // Map functions return a slice of KeyValue.
@@ -16,14 +15,6 @@ type KeyValue struct {
 	Key   string
 	Value string
 }
-
-// for sorting by key.
-type ByKey []mr.KeyValue
-
-// for sorting by key.
-func (a ByKey) Len() int           { return len(a) }
-func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
 // use ihash(key) % NReduce to choose the reduce
 // task number for each KeyValue emitted by Map.
@@ -42,13 +33,16 @@ func Worker(mapf func(string, string) []KeyValue,
 	intermediates := make([][]KeyValue, nReduce)
 
 	for {
-		taskReply := CallTask()
+		taskReply := GetMapTask()
 
+		// No more tasks
 		if !taskReply.Valid {
-			// No more tasks
 			break
 		}
+
 		filename := taskReply.Task.Filename
+
+		fmt.Printf("Processing file: %v\n", filename)
 		file, err := os.Open(filename)
 		if err != nil {
 			log.Fatalf("cannot open %v", filename)
@@ -59,6 +53,7 @@ func Worker(mapf func(string, string) []KeyValue,
 		}
 		file.Close()
 		kva := mapf(filename, string(content))
+
 		for _, kv := range kva {
 			reduceTask := ihash(kv.Key) % nReduce
 			intermediates[reduceTask] = append(intermediates[reduceTask], kv)
@@ -67,20 +62,47 @@ func Worker(mapf func(string, string) []KeyValue,
 		// Write to an intermediate file
 		taskId := taskReply.Task.TaskID
 		for i := 0; i < nReduce; i++ {
-			iname := fmt.Sprintf("mr-%i-%i", taskId, nReduce)
+			iname := fmt.Sprintf("mr-%d-%d", taskId, nReduce)
 			ifile, _ := os.Create(iname)
 			// Write all the kv pairs inside of the []KeyValue bucket to ifile
-			for _, kv := range intermediates[nReduce] {
-				fmt.Fprintf(ifile, "%v %v\n", kv.Key, kv.Value)
+			enc := json.NewEncoder(ifile)
+			for _, kv := range intermediates[i] {
+				if err := enc.Encode(&kv); err != nil {
+					log.Fatalf("cannot encode %v", kv)
+				}
 			}
+			ifile.Close()
 		}
 	}
-
 	// Once they're all finished, we can start with reduce
 	// Reduce will grab each of the intermediate files, aggregate all of the keys
 	// print them to an output file
-	oname := "mr-out-0"
-	ofile, _ := os.Create(oname)
+	// for {
+	// 	// Read a file from the file system
+	// 	taskReply := GetReduceTask()
+	// 	taskId := taskReply.Task.TaskID
+	// 	oname := fmt.Sprintf("mr-out-%i", taskId)
+
+	// 	// No more tasks
+	// 	if !taskReply.Valid {
+	// 		break
+	// 	}
+
+	// 	filename := taskReply.Task.Filename
+	// 	file, err := os.Open(filename)
+	// 	if err != nil {
+	// 		log.Fatalf("cannot open %v", filename)
+	// 	}
+	// 	content, err := io.ReadAll(file)
+	// 	if err != nil {
+	// 		log.Fatalf("cannot read %v", filename)
+	// 	}
+	// 	file.Close()
+	// 	values := []string{}
+
+	// 	// Call the reduce task in that array
+	// 	// Print the results to the out file
+	// }
 }
 
 func CallNReduce() GetNReduceReply {
@@ -92,23 +114,37 @@ func CallNReduce() GetNReduceReply {
 	if ok {
 		return reply
 	} else {
-		fmt.Printf("No nReduce found")
+		fmt.Printf("call failed!\n")
 		panic(1)
 	}
 }
 
-func CallTask() TaskReply {
+func GetMapTask() TaskReply {
 	// Request a task from the coordinator
 	args := TaskArgs{}
 	reply := TaskReply{}
 
 	// Send RPC request, wait for the reply
-	ok := call("Coordinator.GetTask", &args, &reply)
+	ok := call("Coordinator.GetMapTask", &args, &reply)
 	if ok {
-		fmt.Printf("The task is good")
 		return reply
 	} else {
-		fmt.Printf("Task is no good")
+		fmt.Printf("call failed!\n")
+		panic(1)
+	}
+}
+
+func GetReduceTask() TaskReply {
+	// Request a task from the coordinator
+	args := TaskArgs{}
+	reply := TaskReply{}
+
+	// Send RPC request, wait for the reply
+	ok := call("Coordinator.GetReduceTask", &args, &reply)
+	if ok {
+		return reply
+	} else {
+		fmt.Printf("call failed!\n")
 		panic(1)
 	}
 }
@@ -137,6 +173,7 @@ func CallExample() {
 		fmt.Printf("reply.Y %v\n", reply.Y)
 	} else {
 		fmt.Printf("call failed!\n")
+		panic(1)
 	}
 }
 

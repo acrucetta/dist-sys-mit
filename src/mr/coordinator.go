@@ -1,6 +1,7 @@
 package mr
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -48,7 +49,22 @@ func (c *Coordinator) GetNReduce(args *GetNReduceArgs, reply *GetNReduceReply) e
 }
 
 // Your code here -- RPC handlers for the worker to call.
-func (c *Coordinator) GetTask(args *TaskArgs, reply *TaskReply) error {
+func (c *Coordinator) GetMapTask(args *TaskArgs, reply *TaskReply) error {
+	// Get a task from the queue, then set it as InProgres so
+	for i, task := range c.mapTasks {
+		status := c.mapTaskStatus[i]
+		if status == TaskPending {
+			reply.Task = Task{TaskID: task.TaskID, Filename: task.Filename}
+			reply.TaskStatus = TaskPending
+			reply.Valid = true
+			c.mapTaskStatus[i] = TaskInProgress
+			return nil
+		}
+	}
+	return nil
+}
+
+func (c *Coordinator) GetReduceTask(args *TaskArgs, reply *TaskReply) error {
 	// Get a task from the queue, then set it as InProgres so
 	// that we can't get it again
 	// Assign the task to the TaskReply object
@@ -112,6 +128,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	for i, file := range files {
 		c.mapTasks[i] = Task{TaskID: i, Filename: file}
 		c.mapTaskStatus[i] = TaskPending
+		fmt.Printf("Adding map task %v with filename %v\n", i, file)
 	}
 
 	for i := 0; i < nReduce; i++ {
