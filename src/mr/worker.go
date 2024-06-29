@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/rpc"
 	"os"
+	"sort"
 )
 
 // Map functions return a slice of KeyValue.
@@ -15,6 +16,13 @@ type KeyValue struct {
 	Key   string
 	Value string
 }
+
+type ByKey []KeyValue
+
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
 // use ihash(key) % NReduce to choose the reduce
 // task number for each KeyValue emitted by Map.
@@ -30,7 +38,7 @@ func Worker(mapf func(string, string) []KeyValue,
 
 	nReduceReply := CallNReduce()
 	nReduce := nReduceReply.NReduce
-	intermediates := make([][]KeyValue, nReduce)
+	reduceValuess := make([][]KeyValue, nReduce)
 
 	for {
 		taskReply := GetMapTask()
@@ -55,17 +63,18 @@ func Worker(mapf func(string, string) []KeyValue,
 
 		for _, kv := range kva {
 			reduceTask := ihash(kv.Key) % nReduce
-			intermediates[reduceTask] = append(intermediates[reduceTask], kv)
+			reduceValuess[reduceTask] = append(reduceValuess[reduceTask], kv)
 		}
 
-		// Write to an intermediate file
+		// Write to an reduceValues file
 		taskId := taskReply.Task.ID
 		for i := 0; i < nReduce; i++ {
-			iname := fmt.Sprintf("mr-%d-%d", taskId, nReduce)
+			iname := fmt.Sprintf("mr-%d-%d", taskId, i)
+			fmt.Printf("Creating file %v for the task %v\n", iname, taskId)
 			ifile, _ := os.Create(iname)
 			// Write all the kv pairs inside of the []KeyValue bucket to ifile
 			enc := json.NewEncoder(ifile)
-			for _, kv := range intermediates[i] {
+			for _, kv := range reduceValuess[i] {
 				if err := enc.Encode(&kv); err != nil {
 					log.Fatalf("cannot encode %v", kv)
 				}
@@ -75,34 +84,67 @@ func Worker(mapf func(string, string) []KeyValue,
 		ReportTaskCompletion(taskId, MapTask)
 	}
 	// Once they're all finished, we can start with reduce
-	// Reduce will grab each of the intermediate files, aggregate all of the keys
+	// Reduce will grab each of the reduceValues files, aggregate all of the keys
 	// print them to an output file
-	// for {
-	// 	// Read a file from the file system
-	// 	taskReply := GetReduceTask()
-	// 	taskId := taskReply.Task.TaskID
-	// 	oname := fmt.Sprintf("mr-out-%i", taskId)
+	for {
+		// Read a file from the file system
+		taskReply := GetReduceTask()
 
-	// 	// No more tasks
-	// 	if !taskReply.Valid {
-	// 		break
-	// 	}
+		if taskReply.TasksDone {
+			break
+		}
 
-	// 	filename := taskReply.Task.Filename
-	// 	file, err := os.Open(filename)
-	// 	if err != nil {
-	// 		log.Fatalf("cannot open %v", filename)
-	// 	}
-	// 	content, err := io.ReadAll(file)
-	// 	if err != nil {
-	// 		log.Fatalf("cannot read %v", filename)
-	// 	}
-	// 	file.Close()
-	// 	values := []string{}
+		taskId := taskReply.Task.ID
 
-	// 	// Call the reduce task in that array
-	// 	// Print the results to the out file
-	// }
+		// 1. Get all the reduceValues files for the given task id
+		// We need to grab all the reduceValues "Y" files by mr-X-Y
+
+		reduceValues := []KeyValue{}
+		fmt.Printf("We have %v nreduce tasks", nReduce)
+		for i := 0; i < nReduce-1; i++ {
+			// 	Read file, append all keys to an reduceValues file
+			filename := fmt.Sprintf("mr-%d-%d", taskId, i)
+			file, err := os.Open(filename)
+			if err != nil {
+				log.Fatalf("cannot open %v", filename)
+			}
+			dec := json.NewDecoder(file)
+			for {
+				var kv KeyValue
+				if err := dec.Decode(&kv); err != nil {
+					break
+				}
+				reduceValues = append(reduceValues, kv)
+			}
+		}
+		sort.Sort(ByKey(reduceValues))
+
+		// 3. Create the output file
+		oname := fmt.Sprintf("mr-out-%d", taskId)
+		ofile, _ := os.Create(oname)
+
+		// 4. Call reducef on each key and write results
+		i := 0
+		for i < len(reduceValues) {
+			j := i + 1
+			for j < len(reduceValues) && reduceValues[j].Key == reduceValues[i].Key {
+				j++
+			}
+			values := []string{}
+			for k := i; k < j; k++ {
+				values = append(values, reduceValues[k].Value)
+			}
+			output := reducef(reduceValues[i].Key, values)
+
+			// this is the correct format for each line of Reduce output.
+			fmt.Fprintf(ofile, "%v %v\n", reduceValues[i].Key, output)
+			i = j
+		}
+
+		// 5. Report task completion
+		ReportTaskCompletion(taskId, ReduceTask)
+		ofile.Close()
+	}
 }
 
 func ReportTaskCompletion(taskId int, taskType TaskType) {
