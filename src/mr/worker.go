@@ -35,8 +35,7 @@ func Worker(mapf func(string, string) []KeyValue,
 	for {
 		taskReply := GetMapTask()
 
-		// No more tasks
-		if !taskReply.Valid {
+		if taskReply.TasksDone {
 			break
 		}
 
@@ -60,7 +59,7 @@ func Worker(mapf func(string, string) []KeyValue,
 		}
 
 		// Write to an intermediate file
-		taskId := taskReply.Task.TaskID
+		taskId := taskReply.Task.ID
 		for i := 0; i < nReduce; i++ {
 			iname := fmt.Sprintf("mr-%d-%d", taskId, nReduce)
 			ifile, _ := os.Create(iname)
@@ -73,6 +72,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			}
 			ifile.Close()
 		}
+		ReportTaskCompletion(taskId, MapTask)
 	}
 	// Once they're all finished, we can start with reduce
 	// Reduce will grab each of the intermediate files, aggregate all of the keys
@@ -103,6 +103,20 @@ func Worker(mapf func(string, string) []KeyValue,
 	// 	// Call the reduce task in that array
 	// 	// Print the results to the out file
 	// }
+}
+
+func ReportTaskCompletion(taskId int, taskType TaskType) {
+	args := TaskCompletionArgs{TaskId: taskId, TaskType: taskType}
+	reply := TaskCompletionReply{}
+
+	// Send RPC request, wait for the reply
+	ok := call("Coordinator.ReportTaskCompletion", &args, &reply)
+	if ok {
+		fmt.Printf("Reported task completion for %v\n", taskId)
+	} else {
+		fmt.Printf("call failed!\n")
+		panic(1)
+	}
 }
 
 func CallNReduce() GetNReduceReply {

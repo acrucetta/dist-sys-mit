@@ -30,9 +30,8 @@ type TaskArgs struct {
 }
 
 type TaskReply struct {
-	Task       Task
-	TaskStatus TaskStatus
-	Valid      bool
+	Task      Task
+	TasksDone bool
 }
 
 // Cook up a unique-ish UNIX-domain socket name

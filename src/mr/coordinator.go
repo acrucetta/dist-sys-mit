@@ -19,16 +19,22 @@ const (
 )
 
 type Task struct {
-	TaskID   int
-	Filename string
+	ID        int
+	Filename  string
+	Status    TaskStatus
+	StartTime time.Time
 }
 
-type Coordinator struct {
-	mapTasks    []Task
-	reduceTasks []Task
+type TaskType int
 
-	mapTaskStatus    map[int]TaskStatus
-	reduceTaskStatus map[int]TaskStatus
+const (
+	MapTask TaskType = iota
+	ReduceTask
+)
+
+type Coordinator struct {
+	mapTasks    map[int]Task
+	reduceTasks map[int]Task
 
 	inputFiles        []string
 	intermediateFiles map[int][]string
@@ -43,38 +49,115 @@ type GetNReduceReply struct {
 	NReduce int
 }
 
+type TaskCompletionArgs struct {
+	TaskId   int
+	TaskType TaskType
+}
+
+type TaskCompletionReply struct {
+}
+
 func (c *Coordinator) GetNReduce(args *GetNReduceArgs, reply *GetNReduceReply) error {
 	reply.NReduce = c.nReduce
 	return nil
 }
 
-// Your code here -- RPC handlers for the worker to call.
 func (c *Coordinator) GetMapTask(args *TaskArgs, reply *TaskReply) error {
-	// Get a task from the queue, then set it as InProgres so
+	// Get a task from the map, then set it as InProgress
 	for i, task := range c.mapTasks {
-		status := c.mapTaskStatus[i]
-		if status == TaskPending {
-			reply.Task = Task{TaskID: task.TaskID, Filename: task.Filename}
-			reply.TaskStatus = TaskPending
-			reply.Valid = true
-			c.mapTaskStatus[i] = TaskInProgress
+		if task.Status == TaskPending {
+			reply.Task = task
+			c.mapTasks[i] = Task{ID: i, Filename: task.Filename, Status: TaskInProgress, StartTime: time.Now()}
 			return nil
 		}
 	}
+	for _, task := range c.mapTasks {
+		if task.Status != TaskCompleted {
+			return nil
+		}
+	}
+	reply.TasksDone = c.AllMapTasksDone()
 	return nil
 }
 
 func (c *Coordinator) GetReduceTask(args *TaskArgs, reply *TaskReply) error {
-	// Get a task from the queue, then set it as InProgres so
-	// that we can't get it again
-	// Assign the task to the TaskReply object
+	for i, task := range c.reduceTasks {
+		if task.Status == TaskPending {
+			reply.Task = task
+			c.reduceTasks[i] = Task{ID: i, Filename: task.Filename, Status: TaskInProgress, StartTime: time.Now()}
+			return nil
+		}
+	}
+	reply.TasksDone = c.AllReduceTasksDone()
 	return nil
 }
 
-func (c *Coordinator) ReportCompletion(args *TaskArgs, reply *TaskReply) error {
-	// Once the worker is done, tell the server it was completed and update
-	// its task status
+func (c *Coordinator) ReportTaskCompletion(args *TaskCompletionArgs, reply *TaskCompletionReply) error {
+	switch args.TaskType {
+	case MapTask:
+		task := c.mapTasks[args.TaskId]
+		task.Status = TaskCompleted
+		c.mapTasks[args.TaskId] = task
+	case ReduceTask:
+		task := c.reduceTasks[args.TaskId]
+		task.Status = TaskCompleted
+		c.reduceTasks[args.TaskId] = task
+	}
 	return nil
+}
+
+func (c *Coordinator) AllMapTasksDone() bool {
+	allTasksDone := true
+	for _, task := range c.mapTasks {
+		if task.Status != TaskCompleted {
+			allTasksDone = false
+		}
+	}
+	return allTasksDone
+}
+
+func (c *Coordinator) AllReduceTasksDone() bool {
+	allTasksDone := true
+	for _, task := range c.reduceTasks {
+		if task.Status != TaskCompleted {
+			allTasksDone = false
+		}
+	}
+	return allTasksDone
+}
+
+// This function will constantly iterate over the tasks and check
+// if their duration has exceeded 10 seconds; if so, it will set them
+// back to pending.
+func (c *Coordinator) MonitorTasks() {
+	for !c.AllMapTasksDone() {
+		println("Monitoring map tasks...")
+		for i, task := range c.mapTasks {
+			if task.Status == TaskInProgress {
+				t := time.Now()
+				elapsed := t.Sub(task.StartTime)
+				if elapsed.Seconds() > 10 {
+					fmt.Printf("Task %v is overdue, setting it back to Pending\n", i)
+					c.mapTasks[i] = Task{ID: i, Filename: task.Filename, Status: TaskPending}
+				}
+			}
+		}
+		time.Sleep(3 * time.Second)
+	}
+	for !c.AllReduceTasksDone() {
+		println("Monitoring reduce tasks...")
+		for i, task := range c.reduceTasks {
+			if task.Status == TaskInProgress {
+				t := time.Now()
+				elapsed := t.Sub(task.StartTime)
+				if elapsed.Seconds() > 10 {
+					fmt.Printf("Task %v is overdue, setting it back to Pending\n", i)
+					c.reduceTasks[i] = Task{ID: i, Filename: task.Filename, Status: TaskPending}
+				}
+			}
+		}
+		time.Sleep(3 * time.Second)
+	}
 }
 
 // an example RPC handler.
@@ -103,9 +186,9 @@ func (c *Coordinator) server() {
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
 	ret := false
-
-	// Your code here.
-
+	if c.AllMapTasksDone() && c.AllReduceTasksDone() {
+		ret = true
+	}
 	return ret
 }
 
@@ -114,10 +197,8 @@ func (c *Coordinator) Done() bool {
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{
-		mapTasks:          make([]Task, len(files)),
-		reduceTasks:       make([]Task, nReduce),
-		mapTaskStatus:     make(map[int]TaskStatus),
-		reduceTaskStatus:  make(map[int]TaskStatus),
+		mapTasks:          make(map[int]Task),
+		reduceTasks:       make(map[int]Task),
 		inputFiles:        files,
 		intermediateFiles: make(map[int][]string),
 		nReduce:           nReduce,
@@ -126,15 +207,13 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 
 	// Initialize task queues
 	for i, file := range files {
-		c.mapTasks[i] = Task{TaskID: i, Filename: file}
-		c.mapTaskStatus[i] = TaskPending
-		fmt.Printf("Adding map task %v with filename %v\n", i, file)
+		c.mapTasks[i] = Task{ID: i, Filename: file, Status: TaskInProgress}
 	}
 
 	for i := 0; i < nReduce; i++ {
-		c.reduceTasks[i] = Task{TaskID: i}
-		c.reduceTaskStatus[i] = TaskPending
+		c.reduceTasks[i] = Task{ID: i, Status: TaskPending}
 	}
 	c.server()
+	go c.MonitorTasks()
 	return &c
 }
