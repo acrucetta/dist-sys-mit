@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/rpc"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -41,6 +42,8 @@ type Coordinator struct {
 
 	nReduce int
 	timeout time.Duration
+
+	mu sync.Mutex
 }
 
 // RPC call to get the number of reduce tasks
@@ -63,7 +66,8 @@ func (c *Coordinator) GetNReduce(args *GetNReduceArgs, reply *GetNReduceReply) e
 }
 
 func (c *Coordinator) GetMapTask(args *TaskArgs, reply *TaskReply) error {
-	// Get a task from the map, then set it as InProgress
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	for i, task := range c.mapTasks {
 		if task.Status == TaskPending {
 			reply.Task = task
@@ -81,6 +85,8 @@ func (c *Coordinator) GetMapTask(args *TaskArgs, reply *TaskReply) error {
 }
 
 func (c *Coordinator) GetReduceTask(args *TaskArgs, reply *TaskReply) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	for i, task := range c.reduceTasks {
 		if task.Status == TaskPending {
 			reply.Task = task
@@ -107,6 +113,8 @@ func (c *Coordinator) ReportTaskCompletion(args *TaskCompletionArgs, reply *Task
 }
 
 func (c *Coordinator) AllMapTasksDone() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	allTasksDone := true
 	for _, task := range c.mapTasks {
 		if task.Status != TaskCompleted {
@@ -117,6 +125,8 @@ func (c *Coordinator) AllMapTasksDone() bool {
 }
 
 func (c *Coordinator) AllReduceTasksDone() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	allTasksDone := true
 	for _, task := range c.reduceTasks {
 		if task.Status != TaskCompleted {
@@ -131,6 +141,7 @@ func (c *Coordinator) AllReduceTasksDone() bool {
 // back to pending.
 func (c *Coordinator) MonitorTasks() {
 	for !c.AllMapTasksDone() {
+		c.mu.Lock()
 		println("Monitoring map tasks...")
 		for i, task := range c.mapTasks {
 			if task.Status == TaskInProgress {
@@ -142,10 +153,11 @@ func (c *Coordinator) MonitorTasks() {
 				}
 			}
 		}
-		time.Sleep(3 * time.Second)
+		c.mu.Unlock()
 	}
 	for !c.AllReduceTasksDone() {
 		println("Monitoring reduce tasks...")
+		c.mu.Lock()
 		for i, task := range c.reduceTasks {
 			if task.Status == TaskInProgress {
 				t := time.Now()
@@ -156,16 +168,8 @@ func (c *Coordinator) MonitorTasks() {
 				}
 			}
 		}
-		time.Sleep(3 * time.Second)
+		c.mu.Unlock()
 	}
-}
-
-// an example RPC handler.
-//
-// the RPC argument and reply types are defined in rpc.go.
-func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
-	reply.Y = args.X + 1
-	return nil
 }
 
 // start a thread that listens for RPCs from worker.go
@@ -211,7 +215,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		c.mapTasks[i] = Task{ID: i, Filename: file, Status: TaskPending}
 	}
 
-	for i := range files {
+	for i := range nReduce {
 		c.reduceTasks[i] = Task{ID: i, Status: TaskPending}
 	}
 	c.server()

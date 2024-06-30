@@ -38,7 +38,6 @@ func Worker(mapf func(string, string) []KeyValue,
 
 	nReduceReply := CallNReduce()
 	nReduce := nReduceReply.NReduce
-	reduceValuess := make([][]KeyValue, nReduce)
 
 	for {
 		taskReply := GetMapTask()
@@ -61,9 +60,10 @@ func Worker(mapf func(string, string) []KeyValue,
 		file.Close()
 		kva := mapf(filename, string(content))
 
+		reduceValues := make([][]KeyValue, nReduce)
 		for _, kv := range kva {
 			reduceTask := ihash(kv.Key) % nReduce
-			reduceValuess[reduceTask] = append(reduceValuess[reduceTask], kv)
+			reduceValues[reduceTask] = append(reduceValues[reduceTask], kv)
 		}
 
 		// Write to an reduceValues file
@@ -74,7 +74,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			ifile, _ := os.Create(iname)
 			// Write all the kv pairs inside of the []KeyValue bucket to ifile
 			enc := json.NewEncoder(ifile)
-			for _, kv := range reduceValuess[i] {
+			for _, kv := range reduceValues[i] {
 				if err := enc.Encode(&kv); err != nil {
 					log.Fatalf("cannot encode %v", kv)
 				}
@@ -101,12 +101,12 @@ func Worker(mapf func(string, string) []KeyValue,
 
 		reduceValues := []KeyValue{}
 		fmt.Printf("We have %v nreduce tasks\n", nReduce)
-		for i := 0; i < nReduce-1; i++ {
+		for mapTask := 0;;mapTask++ {
 			// 	Read file, append all keys to an reduceValues file
-			filename := fmt.Sprintf("mr-%d-%d", taskId, i)
+			filename := fmt.Sprintf("mr-%d-%d", mapTask, taskId)
 			file, err := os.Open(filename)
 			if err != nil {
-				log.Fatalf("cannot open %v", filename)
+				break
 			}
 			dec := json.NewDecoder(file)
 			for {
