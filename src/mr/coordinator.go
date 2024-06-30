@@ -207,10 +207,11 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 
 	// Initialize task queues
 	for i, file := range files {
-		c.mapTasks[i] = Task{ID: i, Filename: file, Status: TaskInProgress}
+		fmt.Printf("Creating task with ID: %v\n", i)
+		c.mapTasks[i] = Task{ID: i, Filename: file, Status: TaskPending}
 	}
 
-	for i := 0; i < nReduce; i++ {
+	for i := range files {
 		c.reduceTasks[i] = Task{ID: i, Status: TaskPending}
 	}
 	c.server()

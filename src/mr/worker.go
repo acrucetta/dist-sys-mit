@@ -100,7 +100,7 @@ func Worker(mapf func(string, string) []KeyValue,
 		// We need to grab all the reduceValues "Y" files by mr-X-Y
 
 		reduceValues := []KeyValue{}
-		fmt.Printf("We have %v nreduce tasks", nReduce)
+		fmt.Printf("We have %v nreduce tasks\n", nReduce)
 		for i := 0; i < nReduce-1; i++ {
 			// 	Read file, append all keys to an reduceValues file
 			filename := fmt.Sprintf("mr-%d-%d", taskId, i)
