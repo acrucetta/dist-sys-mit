@@ -1,0 +1,15 @@
+question,answer
+What is linearizability?,A consistency model defining correctness for concurrent service requests; operations appear to execute one at a time as they arrive
+How is linearizability defined?,On "histories" - traces of client requests and server responses with timestamps; a history is linearizable if linearization points can be assigned within each operation's time frame
+What is a key consequence of linearizability?,The service can execute concurrent operations in any order as long as linearization points maintain correct behavior
+How do services typically implement linearizability?,By executing client requests one at a time as they arrive; care must be taken to handle retried requests correctly
+What are some examples of other consistency models?,"Eventual consistency, causal consistency, fork consistency, serializability, sequential consistency, timeline consistency"
+Why is linearizability considered a strong consistency model?,It forbids many situations that might surprise programmers; e.g. reads always see fresh data after a completed write
+What are common approaches to ensure correctness in distributed systems?,Thorough testing and use of formal methods for verification
+What are some advantages of linearizability for application writers?,"Reads observe fresh data, consistent views among readers, often allows mini-transactions like test-and-set"
+What are some drawbacks of weaker consistency models like eventual consistency?,"Reads can see stale data, observe writes out of order, writes may not be immediately visible to subsequent reads"
+How do linearizability checkers work?,They try possible operation orders to find valid linearization points; use optimizations to avoid checking impossible orders
+What is the relationship between linearizability and transactions?,Transactions (e.g. in serializability) provide stronger guarantees than linearizability by effectively locking accessed data
+Why is formal verification of realistic distributed systems challenging?,Proving significant theorems about complex programs requires huge effort beyond ordinary programming
+How do teams typically decide when a distributed system is ready to ship?,Balance testing efforts with business constraints; get early customer feedback; ship when functional enough with no known major bugs
+Why not use client request send time as the linearization point?,Network delays make it impractical to guarantee execution order matches client send order; would increase latency for all requests
